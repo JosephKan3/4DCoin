@@ -62,6 +62,9 @@ contract PointsSystemWithQueue is ERC20 {
     }
 
     function transfer(address recipient, uint256 amount) public virtual override returns (bool) {
+        require(isRegistered(msg.sender), "Sender is not registered.");
+        require(isRegistered(recipient), "Recipient is not registered.");
+
         updatePoints(msg.sender);
         updatePoints(recipient);
 
@@ -166,4 +169,24 @@ contract PointsSystemWithQueue is ERC20 {
         require(queuePositions[wallet] > 0 || (queue.length > 0 && queue[0].wallet == wallet), "Wallet not in queue");
         return queuePositions[wallet];
     }
+
+    function getQueueContents() external view returns (QueueItem[] memory) {
+        return queue;
+    }
+
+    function getAllAccountBalances() external view returns (address[] memory, uint256[] memory, uint256[] memory) {
+        address[] memory addresses = new address[](registeredWallets.length());
+        uint256[] memory regularBalances = new uint256[](registeredWallets.length());
+        uint256[] memory restrictedBalances = new uint256[](registeredWallets.length());
+
+        for (uint256 i = 0; i < registeredWallets.length(); i++) {
+            address wallet = registeredWallets.at(i);
+            addresses[i] = wallet;
+            regularBalances[i] = balanceOf(wallet);
+            restrictedBalances[i] = getRestrictedBalance(wallet);
+        }
+
+        return (addresses, regularBalances, restrictedBalances);
+    }
+
 }
