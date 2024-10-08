@@ -5,7 +5,7 @@ import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 
-contract PointsSystemWithQueue is ERC20 {
+contract FourthDimensionCoin is ERC20 {
     using EnumerableSet for EnumerableSet.AddressSet;
 
     struct QueueItem {
@@ -31,8 +31,10 @@ contract PointsSystemWithQueue is ERC20 {
     event QueueUpdated(address wallet, uint256 newPosition);
     event ItemDequeued(address wallet, uint256 consumedTokens);
 
-    constructor() ERC20("4D Coin", "4D") {}
-
+    constructor(address _dappAddress) ERC20("4D Coin", "4D") Ownable(msg.sender) {
+        dappAddress = _dappAddress;
+    }
+    
     function registerWallet() external {
         require(!isRegistered(msg.sender), "Wallet already registered");
         registrationTime[msg.sender] = block.timestamp;
@@ -143,6 +145,7 @@ contract PointsSystemWithQueue is ERC20 {
     }
 
     function dequeueItem() external {
+        require(msg.sender == dappAddress, "Only the dapp can dequeue items");
         require(queue.length > 0, "Queue is empty");
         
         QueueItem memory dequeuedItem = queue[0];
@@ -160,7 +163,6 @@ contract PointsSystemWithQueue is ERC20 {
 
         emit ItemDequeued(dequeuedItem.wallet, consumedTokens);
     }
-
     function getQueueLength() external view returns (uint256) {
         return queue.length;
     }
@@ -189,4 +191,10 @@ contract PointsSystemWithQueue is ERC20 {
         return (addresses, regularBalances, restrictedBalances);
     }
 
+
+    // Owner functions
+    function setDappAddress(address _newDappAddress) external onlyOwner {
+        dappAddress = _newDappAddress;
+    }
+    
 }
