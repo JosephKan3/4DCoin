@@ -7,12 +7,14 @@ import "@openzeppelin/contracts/utils/math/Math.sol";
 
 contract FourthDimensionCoin is ERC20 {
     using EnumerableSet for EnumerableSet.AddressSet;
-
     struct QueueItem {
         address wallet;
-        uint256 stakedTokens;
+        uint256 weight;
+        uint256 queuePriorityValue;
         uint256 timestamp;
+        uint256 stl_uuid;
     }
+
 
     EnumerableSet.AddressSet private registeredWallets;
     mapping(address => uint256) public registrationTime;
@@ -30,11 +32,14 @@ contract FourthDimensionCoin is ERC20 {
     event EnteredQueue(address wallet, uint256 stakedTokens);
     event QueueUpdated(address wallet, uint256 newPosition);
     event ItemDequeued(address wallet, uint256 consumedTokens);
+    event StakeRemoved(address wallet, uint256 returnedTokens);
+    event StakeChanged(address wallet, uint256 newStakedTokens);
 
     constructor(address _dappAddress) ERC20("4D Coin", "4D") Ownable(msg.sender) {
         dappAddress = _dappAddress;
     }
-    
+
+    // Coin functions
     function registerWallet() external {
         require(!isRegistered(msg.sender), "Wallet already registered");
         registrationTime[msg.sender] = block.timestamp;
@@ -105,6 +110,107 @@ contract FourthDimensionCoin is ERC20 {
         return restrictedBalance[account] + newPoints;
     }
 
+    function getAllAccountBalances() external view returns (address[] memory, uint256[] memory, uint256[] memory) {
+        address[] memory addresses = new address[](registeredWallets.length());
+        uint256[] memory regularBalances = new uint256[](registeredWallets.length());
+        uint256[] memory restrictedBalances = new uint256[](registeredWallets.length());
+
+        for (uint256 i = 0; i < registeredWallets.length(); i++) {
+            address wallet = registeredWallets.at(i);
+            addresses[i] = wallet;
+            regularBalances[i] = balanceOf(wallet);
+            restrictedBalances[i] = getRestrictedBalance(wallet);
+        }
+
+        return (addresses, regularBalances, restrictedBalances);
+    }
+
+    // Queue functions
+    function findInsertPosition(uint256 stakedTokens) internal view returns (uint256) {
+        for (uint256 i = 0; i < queue.length; i++) {
+            if (stakedTokens > queue[i].stakedTokens) {
+                return i;
+            }
+        }
+        return queue.length;
+    }
+    
+    function removeStakeFromQueue() external {
+        require(queuePositions[msg.sender] > 0 || (queue.length > 0 && queue[0].wallet == msg.sender), "No stake found in queue");
+        
+        uint256 position = queuePositions[msg.sender];
+        uint256 returnedTokens = queue[position].stakedTokens;
+
+        // Remove the item and shift the rest
+        for (uint256 i = position; i < queue.length - 1; i++) {
+            queue[i] = queue[i + 1];
+            queuePositions[queue[i].wallet] = i;
+        }
+        queue.pop();
+
+        // Remove the position mapping for the removed item
+        delete queuePositions[msg.sender];
+
+        // Return the staked tokens
+        _mint(msg.sender, returnedTokens);
+
+        emit StakeRemoved(msg.sender, returnedTokens);
+    }
+
+    function changeStakeBalance(uint256 newStakedTokens) external {
+        require(queuePositions[msg.sender] > 0 || (queue.length > 0 && queue[0].wallet == msg.sender), "No stake found in queue");
+        
+        uint256 position = queuePositions[msg.sender];
+        uint256 oldStakedTokens = queue[position].stakedTokens;
+
+        if (newStakedTokens > oldStakedTokens) {
+            uint256 additionalStake = newStakedTokens - oldStakedTokens;
+            require(balanceOf(msg.sender) >= additionalStake, "Insufficient balance for additional stake");
+            _burn(msg.sender, additionalStake);
+        } else if (newStakedTokens < oldStakedTokens) {
+            uint256 returnedTokens = oldStakedTokens - newStakedTokens;
+            _mint(msg.sender, returnedTokens);
+        }
+
+        // Update the stake
+        queue[position].stakedTokens = newStakedTokens;
+        queue[position].timestamp = block.timestamp;
+
+        // Reorder the queue
+        _reorderQueue(position);
+
+        emit StakeChanged(msg.sender, newStakedTokens);
+    }
+
+    function _reorderQueue(uint256 startPosition) internal {
+        QueueItem memory item = queue[startPosition];
+        uint256 newPosition = findInsertPosition(item.stakedTokens);
+
+        if (newPosition < startPosition) {
+            // Move up in the queue
+            for (uint256 i = startPosition; i > newPosition; i--) {
+                queue[i] = queue[i - 1];
+                queuePositions[queue[i].wallet] = i;
+            }
+        } else if (newPosition > startPosition) {
+            // Move down in the queue
+            newPosition--; // Adjust for the removal of the current item
+            for (uint256 i = startPosition; i < newPosition; i++) {
+                queue[i] = queue[i + 1];
+                queuePositions[queue[i].wallet] = i;
+            }
+        } else {
+            // Position hasn't changed
+            return;
+        }
+
+        queue[newPosition] = item;
+        queuePositions[item.wallet] = newPosition;
+
+        emit QueueUpdated(item.wallet, newPosition);
+
+    }
+
     function enterQueue(uint256 amount) external {
         updatePoints(msg.sender);
         require(isRegistered(msg.sender), "Wallet not registered");
@@ -135,15 +241,20 @@ contract FourthDimensionCoin is ERC20 {
         emit QueueUpdated(msg.sender, insertPosition);
     }
 
-    function findInsertPosition(uint256 stakedTokens) internal view returns (uint256) {
-        for (uint256 i = 0; i < queue.length; i++) {
-            if (stakedTokens > queue[i].stakedTokens) {
-                return i;
-            }
-        }
+    function getQueueLength() external view returns (uint256) {
         return queue.length;
     }
 
+    function getQueuePosition(address wallet) external view returns (uint256) {
+        require(queuePositions[wallet] > 0 || (queue.length > 0 && queue[0].wallet == wallet), "Wallet not in queue");
+        return queuePositions[wallet];
+    }
+
+    function getQueueContents() external view returns (QueueItem[] memory) {
+        return queue;
+    }
+
+    // Owner functions
     function dequeueItem() external {
         require(msg.sender == dappAddress, "Only the dapp can dequeue items");
         require(queue.length > 0, "Queue is empty");
@@ -163,36 +274,7 @@ contract FourthDimensionCoin is ERC20 {
 
         emit ItemDequeued(dequeuedItem.wallet, consumedTokens);
     }
-    function getQueueLength() external view returns (uint256) {
-        return queue.length;
-    }
 
-    function getQueuePosition(address wallet) external view returns (uint256) {
-        require(queuePositions[wallet] > 0 || (queue.length > 0 && queue[0].wallet == wallet), "Wallet not in queue");
-        return queuePositions[wallet];
-    }
-
-    function getQueueContents() external view returns (QueueItem[] memory) {
-        return queue;
-    }
-
-    function getAllAccountBalances() external view returns (address[] memory, uint256[] memory, uint256[] memory) {
-        address[] memory addresses = new address[](registeredWallets.length());
-        uint256[] memory regularBalances = new uint256[](registeredWallets.length());
-        uint256[] memory restrictedBalances = new uint256[](registeredWallets.length());
-
-        for (uint256 i = 0; i < registeredWallets.length(); i++) {
-            address wallet = registeredWallets.at(i);
-            addresses[i] = wallet;
-            regularBalances[i] = balanceOf(wallet);
-            restrictedBalances[i] = getRestrictedBalance(wallet);
-        }
-
-        return (addresses, regularBalances, restrictedBalances);
-    }
-
-
-    // Owner functions
     function setDappAddress(address _newDappAddress) external onlyOwner {
         dappAddress = _newDappAddress;
     }
