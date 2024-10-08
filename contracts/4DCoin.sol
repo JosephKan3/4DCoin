@@ -6,6 +6,7 @@ import "@openzeppelin/contracts/utils/structs/EnumerableSet.sol";
 import "@openzeppelin/contracts/utils/math/Math.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
+import "./CustomMath.sol";
 
 contract FourthDimensionCoin is ERC20, Ownable {
     using EnumerableSet for EnumerableSet.AddressSet;
@@ -144,11 +145,11 @@ contract FourthDimensionCoin is ERC20, Ownable {
     }
 
     function calculateInsertionCost(uint256 weight, uint256 queuePriorityValue) public pure returns (uint256) {
-        return Math.log2(weight) * queuePriorityValue;
+        return Logarithm.logBase(weight, 1.2 * 1e18) * queuePriorityValue * 10**18;
     }
 
     function calculatePriorityValue(uint256 weight, uint256 staked_coins) public pure returns (uint256) {
-        return staked_coins / Math.log2(weight);
+        return staked_coins / Logarithm.logBase(weight * 1e18, 1.2 * 1e18) / 10**18;
     }
 
     function removeStakeFromQueue(uint256 stl_uuid) external {
